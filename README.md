@@ -36,8 +36,6 @@ Key statistics:
 
 Exploratory analysis reveals similar vocabularies across splits but a **bimodal carb distribution** and longer descriptions in the test set, explaining small generalization gaps.
 
-> **Data availability note:** The public `data/test.csv` file currently contains placeholder rows while we wait for the official Nutribench test release.
-
 ---
 
 ## Running the Project
