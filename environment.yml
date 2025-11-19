@@ -1,0 +1,22 @@
+name: nutribench
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.11
+  - pip>=23.3
+  - numpy>=1.26
+  - pandas>=2.2
+  - scikit-learn>=1.5
+  - typing_extensions
+  - datasets
+  - evaluate
+  - seaborn
+  - matplotlib
+  - safetensors
+  - pip:
+      - torch
+      - transformers>=4.39
+      # - evaluate>=0.4
+      - optuna>=3.6

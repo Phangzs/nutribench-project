@@ -3,7 +3,7 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
     TrainingArguments, Trainer, DataCollatorWithPadding,
-    EarlyStoppingCallback
+    EarlyStoppingCallback, set_seed
 )
 import evaluate
 from pathlib import Path
@@ -43,8 +43,8 @@ def objective(trial: optuna.Trial):
                      "model_name", search_space["model_name"]))
 
     ds = load_dataset("csv",
-                      data_files={"train":"train_without_last_500.csv",
-                                  "validation":"val.csv"})
+                      data_files={"train":"data/train.csv",
+                                  "validation":"data/val.csv"})
     ds = ds.map(lambda x: tokenizer(x["query"], truncation=True), batched=True)
 
     train_ds = ds["train"]
