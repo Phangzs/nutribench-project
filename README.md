@@ -49,7 +49,7 @@ All experiments are orchestrated through `run_project.sh`, which wraps the indiv
    conda env create -f environment.yml
    conda activate nutribench
    ```
-2. Use the master script:
+2. Use the main script:
 
 | Command | Purpose |
 | ------- | ------- |
