@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Utility script for evaluating saved checkpoints and running ad-hoc predictions."""
+"""Utility script for running inference from saved checkpoints."""
 
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate or query a saved transformer checkpoint.")
+    parser = argparse.ArgumentParser(description="Run inference with a saved transformer checkpoint.")
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
-    eval_parser = subparsers.add_parser("evaluate", help="Run MAE/Acc@7.5 on a dataset split.")
+    eval_parser = subparsers.add_parser("evaluate", help="Run inference on a dataset split.")
     eval_parser.add_argument("--checkpoint", required=True, help="Path to a HuggingFace checkpoint directory.")
     eval_parser.add_argument(
         "--split",
         default="test",
         choices=("train", "val", "test"),
-        help="Dataset split to evaluate (default: test).",
+        help="Dataset split to run inference on (default: test).",
     )
     eval_parser.add_argument(
         "--batch-size",
@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Optional CSV to store predictions. Columns: query,label,prediction",
+        help="Optional CSV to store predictions. Defaults to results/<split>_predictions.csv",
     )
 
     predict_parser = subparsers.add_parser("predict", help="Load a checkpoint and answer free-form prompts.")
@@ -97,36 +97,25 @@ def predict_texts(
     return np.asarray(preds, dtype=np.float32)
 
 
-def evaluate_split(args: argparse.Namespace) -> None:
+def run_inference(args: argparse.Namespace) -> None:
     split_file = Path("data") / f"{args.split}.csv"
     if not split_file.exists():
         raise SystemExit(f"Missing data split '{split_file}'. Run the data step first.")
 
     df = pd.read_csv(split_file)
-    if "query" not in df.columns or "label" not in df.columns:
-        raise SystemExit(f"{split_file} must contain 'query' and 'label' columns.")
+    if "query" not in df.columns:
+        raise SystemExit(f"{split_file} must contain a 'query' column.")
 
+    queries = df["query"].fillna("").astype(str).tolist()
     tokenizer, model, device = load_model(args.checkpoint)
-    predictions = predict_texts(model, tokenizer, device, df["query"].tolist(), args.batch_size)
-    labels = df["label"].to_numpy(dtype=np.float32)
+    predictions = predict_texts(model, tokenizer, device, queries, args.batch_size)
 
-    mae = np.mean(np.abs(predictions - labels))
-    acc = np.mean(np.abs(predictions - labels) <= 7.5)
-
-    print("=" * 72)
-    print(f"Checkpoint : {args.checkpoint}")
-    print(f"Split      : {args.split}")
-    print("-" * 72)
-    print(f"MAE        : {mae:.4f}")
-    print(f"Accuracy@7.5 : {acc * 100:.2f}%")
-    print("=" * 72)
-
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        out_df = df.copy()
-        out_df["prediction"] = predictions
-        out_df.to_csv(args.output, index=False)
-        print(f"[+] Saved predictions to {args.output}")
+    output = df.copy()
+    output["prediction"] = predictions
+    output_path = args.output or Path("results") / f"{args.split}_predictions.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output.to_csv(output_path, index=False)
+    print(f"[+] Wrote {len(output)} predictions to {output_path}")
 
 
 def interactive_predict(args: argparse.Namespace) -> None:
@@ -176,7 +165,7 @@ def interactive_predict(args: argparse.Namespace) -> None:
 def main() -> None:
     args = parse_args()
     if args.mode == "evaluate":
-        evaluate_split(args)
+        run_inference(args)
     elif args.mode == "predict":
         interactive_predict(args)
     else:

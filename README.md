@@ -57,7 +57,7 @@ All experiments are orchestrated through `run_project.sh`, which wraps the indiv
 | `./run_project.sh data` | Build deterministic `train/val/test` CSVs (requires `data/nutribench.csv` or existing splits). |
 | `./run_project.sh benchmark` | Run the mean and linear baselines in `scripts/`. |
 | `./run_project.sh train transformer [--args…]` | Launch transformer fine-tuning (Optuna grid). Use `train l1`, `train l2`, or `train mean` for baselines. |
-| `./run_project.sh evaluate [--split val\|test] [--checkpoint PATH]` | Evaluate the latest (or specified) checkpoint, reporting MAE/RMSE/Acc@7.5 and optionally saving predictions. |
+| `./run_project.sh evaluate [--split val\|test] [--checkpoint PATH]` | Run inference on the chosen split and write a CSV with queries and predicted carbs (`results/<split>_predictions.csv` by default). |
 | `./run_project.sh predict [--text \"Two eggs\"]` | Load the latest checkpoint for interactive/manual predictions. |
 | `./run_project.sh viz` | Regenerate the exploratory plots into `results/plots/`. |
 

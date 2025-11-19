@@ -18,7 +18,7 @@ Modes
   data            Create deterministic train/val/test splits from data/*.csv.
   benchmark       Run the mean, L1, and L2 baselines.
   train [target]  Train a model: transformer (default), mean, l1, or l2.
-  evaluate        Evaluate a saved checkpoint on val/test data.
+  evaluate        Run inference on a split and save predictions to CSV.
   predict         Interactive inference with a saved checkpoint.
   viz             Generate exploratory data plots.
 
@@ -27,7 +27,7 @@ Examples
   ./run_project.sh data
   ./run_project.sh benchmark
   ./run_project.sh train transformer
-  ./run_project.sh evaluate --split test --save-preds
+  ./run_project.sh evaluate --split test
   ./run_project.sh predict --checkpoint checkpoints/study/0/checkpoint-500
 EOF
 }
@@ -189,7 +189,6 @@ evaluate_model() {
     require_data_splits
     local checkpoint=""
     local split="test"
-    local save_flag=0
     local custom_output=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -201,13 +200,13 @@ evaluate_model() {
                 split="$2"
                 shift 2
                 ;;
-            --save-preds)
-                save_flag=1
-                shift
-                ;;
             --output)
                 custom_output="$2"
                 shift 2
+                ;;
+            --save-preds)
+                log "Note: --save-preds is no longer required; predictions are always saved."
+                shift
                 ;;
             *)
                 log "Unknown evaluate option '$1'"
@@ -229,15 +228,13 @@ evaluate_model() {
     local output_path=""
     if [[ -n "$custom_output" ]]; then
         output_path="$custom_output"
-    elif [[ $save_flag -eq 1 ]]; then
+    else
         output_path="$RESULTS_DIR/${split}_predictions.csv"
     fi
 
-    local args=(evaluate --checkpoint "$checkpoint" --split "$split")
-    if [[ -n "$output_path" ]]; then
-        args+=(--output "$output_path")
-    fi
+    local args=(evaluate --checkpoint "$checkpoint" --split "$split" --output "$output_path")
 
+    log "Saving predictions to $output_path"
     python "$SCRIPT_DIR/evaluate_transformer.py" "${args[@]}"
 }
 
