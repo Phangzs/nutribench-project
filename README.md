@@ -55,8 +55,9 @@ All experiments are orchestrated through `run_project.sh`, which wraps the indiv
 | `./run_project.sh data` | Build deterministic `train/val/test` CSVs (requires `data/nutribench.csv` or existing splits). |
 | `./run_project.sh benchmark` | Run the mean and linear baselines in `scripts/`. |
 | `./run_project.sh train transformer [--args…]` | Launch transformer fine-tuning (Optuna grid). Use `train l1`, `train l2`, or `train mean` for baselines. |
-| `./run_project.sh evaluate [--split val\|test] [--checkpoint PATH]` | Run inference on the chosen split and write a CSV with queries and predicted carbs (`results/<split>_predictions.csv` by default). |
-| `./run_project.sh predict [--text \"Two eggs\"]` | Load the latest checkpoint for interactive/manual predictions. |
+| `./run_project.sh train rnn [--trials 30 --epochs 30]` | Run the PyTorch RNN Optuna search (saves checkpoints under `checkpoints/<study>/<trial>` + `vectorizer.json`). |
+| `./run_project.sh evaluate --model transformer\|rnn [--split val\|test] [--checkpoint PATH]` | Run inference on a split and save predictions (`results/<split>_predictions*.csv` by default). |
+| `./run_project.sh predict --model transformer\|rnn [--text \"Two eggs\"]` | Load the latest checkpoint for interactive/manual predictions. |
 | `./run_project.sh viz` | Regenerate the exploratory plots into `results/plots/`. |
 
 ---
@@ -72,18 +73,16 @@ All experiments are orchestrated through `run_project.sh`, which wraps the indiv
 
 ### 2. LSTM-based RNN
 
-> **Implementation status:** The RNN training/inference scripts are temporarily unavailable in this repository snapshot and will be reintroduced soon. The discussion below captures the intended architecture and findings.
-
-* 2 stacked RNN layers + dropout regularization
-* Tuned using **Optuna**:
-
-  * Embedding = 64
-  * RNN = 128 units
-  * LSTM = 32 units
-  * Dropout = 0.399
-  * LR = 0.0017
-* Training ≈ 3 min
-* Validation MAE = 7.56, Accuracy@7.5 = 73.3 %
+* Implemented in PyTorch (`scripts/train_rnn.py` + `scripts/evaluate_rnn.py`) with saved checkpoints: `model.pt`, `config.json`, `vectorizer.json`, and per-trial metrics.
+* Architecture: embedding → RNN (R units) → RNN (⌊R/2⌋ units) → dropout → LSTM (L units) → linear regressor.
+* Optuna search space \(H = (d_e, d_r, d_l, \lambda, \alpha)\):
+  * \(d_e \in \{64, 128, 256\}\)
+  * \(d_r \in \{16, 17, \dots, 128\}\) with the second RNN layer fixed to \(\lfloor d_r / 2 \rfloor\)
+  * \(d_l \in \{16, 32, 64\}\)
+  * \(\lambda \in [0.2, 0.5]\) (dropout between RNN and LSTM)
+  * \(\alpha \in [1\times10^{-4}, 1\times10^{-2}]\) (log-sampled Adam LR)
+* Typical runtime with early stopping: ≈ 3 min for 30 trials on a laptop. Best observed config: \(d_e=64\), \(d_r=128\), \(d_l=32\), \(\lambda=0.399\), \(\alpha=1.7\times10^{-3}\) → Validation MAE = 7.56, Accuracy@7.5 = 73.3 %.
+* Train via `./run_project.sh train rnn --trials 30 --epochs 30`; run inference with `./run_project.sh evaluate --model rnn --split test`.
 
 Despite its small size (< 1 M params), the RNN **beats SOTA** while remaining highly efficient and deterministic.
 

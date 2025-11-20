@@ -20,3 +20,4 @@ dependencies:
       - transformers>=4.39
       # - evaluate>=0.4
       - optuna>=3.6
+      - protobuf>=4.23

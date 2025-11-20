@@ -17,9 +17,9 @@ Modes
   setup           Install dependencies (conda env update) and create folders.
   data            Create deterministic train/val/test splits from data/*.csv.
   benchmark       Run the mean, L1, and L2 baselines.
-  train [target]  Train a model: transformer (default), mean, l1, or l2.
-  evaluate        Run inference on a split and save predictions to CSV.
-  predict         Interactive inference with a saved checkpoint.
+  train [target]  Train a model: transformer (default), rnn, mean, l1, or l2.
+  evaluate        Run inference on a split and save predictions to CSV. (--model transformer|rnn)
+  predict         Interactive inference with a saved checkpoint. (--model transformer|rnn)
   viz             Generate exploratory data plots.
 
 Examples
@@ -27,7 +27,9 @@ Examples
   ./run_project.sh data
   ./run_project.sh benchmark
   ./run_project.sh train transformer
+  ./run_project.sh train rnn --trials 10 --epochs 20
   ./run_project.sh evaluate --split test
+  ./run_project.sh evaluate --model rnn --checkpoint checkpoints/rnn_optuna/0
   ./run_project.sh predict --checkpoint checkpoints/study/0/checkpoint-500
 EOF
 }
@@ -54,7 +56,7 @@ require_data_splits() {
     fi
 }
 
-find_latest_checkpoint() {
+find_latest_transformer_checkpoint() {
     if [[ ! -d "$CHECKPOINT_DIR" ]]; then
         return 1
     fi
@@ -81,6 +83,42 @@ for current, _, files in os.walk(root):
 if latest_path:
     print(latest_path)
 PY
+}
+
+find_latest_rnn_checkpoint() {
+    if [[ ! -d "$CHECKPOINT_DIR" ]]; then
+        return 1
+    fi
+    python - "$CHECKPOINT_DIR" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+latest_path = None
+latest_mtime = -1.0
+
+for current, _, files in os.walk(root):
+    if "model.pt" not in files:
+        continue
+    mtime = os.path.getmtime(os.path.join(current, "model.pt"))
+    if mtime > latest_mtime:
+        latest_mtime = mtime
+        latest_path = current
+
+if latest_path:
+    print(latest_path)
+PY
+}
+
+detect_checkpoint_type() {
+    local path="$1"
+    if [[ -f "$path/model.pt" ]]; then
+        echo "rnn"
+    elif [[ -f "$path/pytorch_model.bin" || -f "$path/model.safetensors" ]]; then
+        echo "transformer"
+    else
+        echo ""
+    fi
 }
 
 setup_env() {
@@ -168,6 +206,10 @@ train_model() {
             log "Launching Optuna-powered transformer fine-tuning."
             python "$SCRIPT_DIR/train_transformer.py" "$@"
             ;;
+        rnn)
+            log "Launching Optuna-powered RNN training."
+            python "$SCRIPT_DIR/train_rnn.py" "$@"
+            ;;
         mean|baseline)
             python "$SCRIPT_DIR/Baseline_average_Guess_Classical_Method.py" "$@"
             ;;
@@ -178,7 +220,7 @@ train_model() {
             python "$SCRIPT_DIR/Linear_Regression_Classical_Method_L2.py" "$@"
             ;;
         *)
-            log "Unknown train target '$target'. Expected transformer|mean|l1|l2."
+            log "Unknown train target '$target'. Expected transformer|rnn|mean|l1|l2."
             exit 1
             ;;
     esac
@@ -190,8 +232,14 @@ evaluate_model() {
     local checkpoint=""
     local split="test"
     local custom_output=""
+    local model_type="transformer"
+    local batch_size=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --model)
+                model_type="$2"
+                shift 2
+                ;;
             --checkpoint)
                 checkpoint="$2"
                 shift 2
@@ -202,6 +250,10 @@ evaluate_model() {
                 ;;
             --output)
                 custom_output="$2"
+                shift 2
+                ;;
+            --batch-size)
+                batch_size="$2"
                 shift 2
                 ;;
             --save-preds)
@@ -216,26 +268,71 @@ evaluate_model() {
         esac
     done
 
-    if [[ -z "$checkpoint" ]]; then
-        checkpoint="$(find_latest_checkpoint || true)"
-        if [[ -z "$checkpoint" ]]; then
-            log "No checkpoints were found. Provide one via --checkpoint."
-            exit 1
+    # If the user passed a checkpoint but no model, guess from its contents.
+    if [[ -n "$checkpoint" && "$model_type" == "transformer" ]]; then
+        guessed="$(detect_checkpoint_type "$checkpoint")"
+        if [[ -n "$guessed" ]]; then
+            model_type="$guessed"
+            log "Auto-detected checkpoint type: $model_type"
         fi
-        log "Auto-selected checkpoint: $checkpoint"
     fi
 
-    local output_path=""
-    if [[ -n "$custom_output" ]]; then
-        output_path="$custom_output"
-    else
-        output_path="$RESULTS_DIR/${split}_predictions.csv"
-    fi
+    case "$model_type" in
+        transformer)
+            if [[ -z "$checkpoint" ]]; then
+                checkpoint="$(find_latest_transformer_checkpoint || true)"
+                if [[ -z "$checkpoint" ]]; then
+                    log "No transformer checkpoints were found. Provide one via --checkpoint."
+                    exit 1
+                fi
+                log "Auto-selected checkpoint: $checkpoint"
+            fi
 
-    local args=(evaluate --checkpoint "$checkpoint" --split "$split" --output "$output_path")
+            local output_path=""
+            if [[ -n "$custom_output" ]]; then
+                output_path="$custom_output"
+            else
+                output_path="$RESULTS_DIR/${split}_predictions.csv"
+            fi
 
-    log "Saving predictions to $output_path"
-    python "$SCRIPT_DIR/evaluate_transformer.py" "${args[@]}"
+            local args=(evaluate --checkpoint "$checkpoint" --split "$split" --output "$output_path")
+            if [[ -n "$batch_size" ]]; then
+                args+=(--batch-size "$batch_size")
+            fi
+
+            log "Saving predictions to $output_path"
+            python "$SCRIPT_DIR/evaluate_transformer.py" "${args[@]}"
+            ;;
+        rnn)
+            if [[ -z "$checkpoint" ]]; then
+                checkpoint="$(find_latest_rnn_checkpoint || true)"
+                if [[ -z "$checkpoint" ]]; then
+                    log "No RNN checkpoints were found. Provide one via --checkpoint."
+                    exit 1
+                fi
+                log "Auto-selected RNN checkpoint: $checkpoint"
+            fi
+
+            local output_path=""
+            if [[ -n "$custom_output" ]]; then
+                output_path="$custom_output"
+            else
+                output_path="$RESULTS_DIR/${split}_predictions_rnn.csv"
+            fi
+
+            local args=(evaluate --checkpoint "$checkpoint" --split "$split" --output "$output_path")
+            if [[ -n "$batch_size" ]]; then
+                args+=(--batch-size "$batch_size")
+            fi
+
+            log "Saving predictions to $output_path"
+            python "$SCRIPT_DIR/evaluate_rnn.py" "${args[@]}"
+            ;;
+        *)
+            log "Unknown model '$model_type'. Expected transformer or rnn."
+            exit 1
+            ;;
+    esac
 }
 
 predict_model() {
@@ -243,9 +340,14 @@ predict_model() {
     local checkpoint=""
     local text=""
     local batch_size=""
+    local model_type="transformer"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --model)
+                model_type="$2"
+                shift 2
+                ;;
             --checkpoint)
                 checkpoint="$2"
                 shift 2
@@ -266,23 +368,59 @@ predict_model() {
         esac
     done
 
-    if [[ -z "$checkpoint" ]]; then
-        checkpoint="$(find_latest_checkpoint || true)"
-        if [[ -z "$checkpoint" ]]; then
-            log "No checkpoints were found. Provide one via --checkpoint."
-            exit 1
+    # If the user passed a checkpoint but no model, guess from its contents.
+    if [[ -n "$checkpoint" && "$model_type" == "transformer" ]]; then
+        guessed="$(detect_checkpoint_type "$checkpoint")"
+        if [[ -n "$guessed" ]]; then
+            model_type="$guessed"
+            log "Auto-detected checkpoint type: $model_type"
         fi
-        log "Auto-selected checkpoint: $checkpoint"
     fi
 
-    local args=(predict --checkpoint "$checkpoint")
-    if [[ -n "$text" ]]; then
-        args+=(--text "$text")
-    fi
-    if [[ -n "$batch_size" ]]; then
-        args+=(--batch-size "$batch_size")
-    fi
-    python "$SCRIPT_DIR/evaluate_transformer.py" "${args[@]}"
+    case "$model_type" in
+        transformer)
+            if [[ -z "$checkpoint" ]]; then
+                checkpoint="$(find_latest_transformer_checkpoint || true)"
+                if [[ -z "$checkpoint" ]]; then
+                    log "No transformer checkpoints were found. Provide one via --checkpoint."
+                    exit 1
+                fi
+                log "Auto-selected checkpoint: $checkpoint"
+            fi
+
+            local args=(predict --checkpoint "$checkpoint")
+            if [[ -n "$text" ]]; then
+                args+=(--text "$text")
+            fi
+            if [[ -n "$batch_size" ]]; then
+                args+=(--batch-size "$batch_size")
+            fi
+            python "$SCRIPT_DIR/evaluate_transformer.py" "${args[@]}"
+            ;;
+        rnn)
+            if [[ -z "$checkpoint" ]]; then
+                checkpoint="$(find_latest_rnn_checkpoint || true)"
+                if [[ -z "$checkpoint" ]]; then
+                    log "No RNN checkpoints were found. Provide one via --checkpoint."
+                    exit 1
+                fi
+                log "Auto-selected RNN checkpoint: $checkpoint"
+            fi
+
+            local args=(predict --checkpoint "$checkpoint")
+            if [[ -n "$text" ]]; then
+                args+=(--text "$text")
+            fi
+            if [[ -n "$batch_size" ]]; then
+                args+=(--batch-size "$batch_size")
+            fi
+            python "$SCRIPT_DIR/evaluate_rnn.py" "${args[@]}"
+            ;;
+        *)
+            log "Unknown model '$model_type'. Expected transformer or rnn."
+            exit 1
+            ;;
+    esac
 }
 
 visualize_data() {
