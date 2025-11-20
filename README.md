@@ -135,14 +135,10 @@ Both RNN and DistilBERT **outperform previous LLM baselines**, while being **ord
 ```
 nutribench-project/
 ├── data/                   # Nutribench dataset splits
-├── models/
+├── checkpoints/
 │   ├── lstm_rnn.py         # Lightweight RNN model
 │   ├── transformer.py      # DistilBERT fine-tuning
 │   └── baselines.py        # Mean & Linear models
-├── notebooks/
-│   ├── EDA.ipynb           # Exploratory data analysis
-│   ├── RNN_Optuna.ipynb    # RNN hyperparameter tuning
-│   └── Transformer_Search.ipynb
 ├── results/
 │   ├── rnn_results.csv
 │   ├── transformer_results.csv
