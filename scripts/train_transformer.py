@@ -1,12 +1,11 @@
-import os, random, optuna, numpy as np, torch
+import random, optuna, numpy as np
 from datasets import load_dataset
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
     TrainingArguments, Trainer, DataCollatorWithPadding,
-    EarlyStoppingCallback, set_seed
+    EarlyStoppingCallback
 )
 import evaluate
-from pathlib import Path
 
 mae_metric = evaluate.load("mae")
 
@@ -18,27 +17,44 @@ def compute_metrics(eval_pred):
     return {"mae": mae_val, "accuracy@7.5": acc75}
 
 search_space = {
-    "model_name": ['bert-base-cased', 'bert-base-uncased', 'roberta-base', 'distilbert-base-uncased', 'distilbert-base-cased'],
+    "model_name": [
+        "bert-base-cased",
+        "bert-base-uncased",
+        "roberta-base",
+        "distilbert-base-uncased",
+        "distilbert-base-cased",
+    ],
     "weight_decay": [0, 0.005, 0.01],
-    "learning_rate": [5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
+    "learning_rate": [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6],
 }
 sampler = optuna.samplers.GridSampler(search_space) 
 study   = optuna.create_study(direction="minimize", sampler=sampler)
 
 
-def subsample_validation(dataset, frac: float, seed: int):
-    if frac >= 1.0:
-        return dataset
-    size = int(len(dataset) * frac)
-    rng  = random.Random(seed)
-    idx  = rng.sample(range(len(dataset)), size)
-    return dataset.select(idx)
+class ResamplingTrainer(Trainer):
+    """Trainer that re-samples validation each epoch to drop a random half."""
+    def __init__(self, *args, val_frac: float = 1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.val_frac = val_frac
+        self._full_eval_dataset = self.eval_dataset
+
+    def get_eval_dataloader(self, eval_dataset=None):
+        base_ds = eval_dataset or self._full_eval_dataset
+        if base_ds is None:
+            return super().get_eval_dataloader(eval_dataset)
+        if self.val_frac < 1.0:
+            size = max(1, int(len(base_ds) * self.val_frac))
+            epoch_int = int(self.state.epoch or 0)
+            rng = random.Random((self.args.seed or 0) + epoch_int)
+            sampled = base_ds.select(rng.sample(range(len(base_ds)), size))
+            return super().get_eval_dataloader(sampled)
+        return super().get_eval_dataloader(base_ds)
 
 
 def objective(trial: optuna.Trial):
 
 
-    val_frac = 0.50                     
+    val_frac = 0.5  # randomly omit half of validation each epoch                    
     tokenizer = AutoTokenizer.from_pretrained(trial.suggest_categorical(
                      "model_name", search_space["model_name"]))
 
@@ -48,7 +64,7 @@ def objective(trial: optuna.Trial):
     ds = ds.map(lambda x: tokenizer(x["query"], truncation=True), batched=True)
 
     train_ds = ds["train"]
-    eval_ds  = subsample_validation(ds["validation"], val_frac, seed=trial.number)
+    eval_ds  = ds["validation"]
 
     model_init = lambda: AutoModelForSequenceClassification.from_pretrained(
                              trial.params["model_name"],
@@ -61,25 +77,26 @@ def objective(trial: optuna.Trial):
         learning_rate   = trial.suggest_categorical("learning_rate", search_space["learning_rate"]),
         weight_decay    = trial.suggest_categorical("weight_decay", search_space["weight_decay"]),
         lr_scheduler_type="linear",
-        num_train_epochs = 5,                    
+        num_train_epochs = 50,                    
         eval_strategy = "epoch",
         save_strategy= "epoch",
         logging_strategy     = "epoch",
         load_best_model_at_end = True,
         metric_for_best_model = "mae",
         greater_is_better     = False,
-        save_total_limit      = 1,
+        save_total_limit      = 1, # TODO: should save every 500 or something
         seed = 42,
     )
 
-    trainer = Trainer(
+    trainer = ResamplingTrainer(
         args = args,
         model_init = model_init,
         train_dataset = train_ds,
         eval_dataset  = eval_ds,
         data_collator = DataCollatorWithPadding(tokenizer),
         compute_metrics = compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)]
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+        val_frac=val_frac,
     )
 
     trainer.train()                       
@@ -91,5 +108,4 @@ study.optimize(objective, n_trials=n_trials, timeout=None, show_progress_bar=Tru
 
 print("Best MAE:",   study.best_value)
 print("Best grid:",  study.best_params)
-# study.trials_dataframe().to_csv("optuna_trials.csv")
-
+study.trials_dataframe().to_csv("optuna_trials.csv")
